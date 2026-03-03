@@ -6,10 +6,17 @@
     <title>東京都学校施設マップ</title>
 
     <!-- Leaflet（地図ライブラリ）のCSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- integrity属性（SRI）: CDNが改ざんされた場合にブラウザが読み込みを拒否する -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+          crossorigin="anonymous" />
     <!-- MarkerCluster（マーカーをまとめて表示するプラグイン）のCSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+          integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV"
+          crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+          integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+"
+          crossorigin="anonymous" />
 
     <style>
         /* ページ全体のリセット */
@@ -284,8 +291,9 @@
             <div class="filter-section">
                 <h3>▼ 学校種別</h3>
                 <div class="filter-actions">
-                    <button onclick="selectAll('type-filters', selectedTypes, true)">全選択</button>
-                    <button onclick="selectAll('type-filters', selectedTypes, false)">全解除</button>
+                    <!-- onclick属性は使わず、JS側でイベントを登録する -->
+                    <button id="btn-type-all">全選択</button>
+                    <button id="btn-type-none">全解除</button>
                 </div>
                 <div id="type-filters"></div>
             </div>
@@ -294,8 +302,8 @@
             <div class="filter-section">
                 <h3>▼ 設置者区分</h3>
                 <div class="filter-actions">
-                    <button onclick="selectAll('org-filters', selectedOrgs, true)">全選択</button>
-                    <button onclick="selectAll('org-filters', selectedOrgs, false)">全解除</button>
+                    <button id="btn-org-all">全選択</button>
+                    <button id="btn-org-none">全解除</button>
                 </div>
                 <div id="org-filters"></div>
             </div>
@@ -325,11 +333,32 @@
 </div>
 
 <!-- Leaflet 本体 -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- integrity属性（SRI）: CDNが改ざんされた場合にブラウザがスクリプトの実行を拒否する -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+        crossorigin="anonymous"></script>
 <!-- MarkerCluster プラグイン（近くのマーカーをまとめて表示） -->
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"
+        integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr"
+        crossorigin="anonymous"></script>
 
 <script>
+// ============================================================
+// セキュリティ：HTML特殊文字をエスケープする関数
+// GeoJSONから読み込んだ値を直接HTMLに埋め込むとXSS攻撃の危険があるため、
+// 必ずこの関数を通してから使う
+// 例: <script> → &lt;script&gt; となり、スクリプトとして実行されなくなる
+// ============================================================
+function escapeHtml(value) {
+    if (value == null) return '';          // null / undefined は空文字に
+    return String(value)
+        .replace(/&/g,  '&amp;')          // & を先に変換（重要）
+        .replace(/</g,  '&lt;')           // < をエスケープ
+        .replace(/>/g,  '&gt;')           // > をエスケープ
+        .replace(/"/g,  '&quot;')         // " をエスケープ
+        .replace(/'/g,  '&#39;');         // ' をエスケープ
+}
+
 // ============================================================
 // 学校種別コードの定義（P29_003）
 // ============================================================
@@ -441,26 +470,33 @@ function createMarker(feature) {
     });
 
     // ---- ポップアップの中身を組み立てる ----
-    // 廃校バッジ
+    // ⚠️ GeoJSONから取得した値は必ず escapeHtml() を通してからHTMLに埋め込む
+    const safeName   = escapeHtml(p.P29_004); // 施設名
+    const safeAddr   = escapeHtml(p.P29_005); // 住所
+    const safeCode   = escapeHtml(p.P29_002); // 施設コード
+    const safeCampus = escapeHtml(p.P29_009); // キャンパス名（nullなら空文字）
+
+    // 廃校バッジ（定数文字列なのでエスケープ不要）
     const closedBadge = isClosed
         ? `<span style="background:#e53935;color:white;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:6px;vertical-align:middle;">廃校</span>`
         : '';
 
-    // 分校バッジ
+    // 分校バッジ（定数文字列なのでエスケープ不要）
     const branchBadge = (p.P29_008 && p.P29_008 !== '00')
         ? `<span style="background:#1565C0;color:white;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:4px;vertical-align:middle;">分校</span>`
         : '';
 
-    // キャンパス名（大学で複数キャンパスがある場合のみ）
-    const campusRow = p.P29_009
-        ? `<tr><th>キャンパス</th><td>${p.P29_009}</td></tr>`
+    // キャンパス名行（大学で複数キャンパスがある場合のみ表示）
+    const campusRow = safeCampus
+        ? `<tr><th style="text-align:left;color:#777;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;">キャンパス</th><td>${safeCampus}</td></tr>`
         : '';
 
+    // typeInfo.label / orgInfo.label / typeInfo.color はすべてコード内の定数なのでエスケープ不要
     marker.bindPopup(`
         <div style="font-family:'Hiragino Sans','Meiryo',sans-serif;min-width:210px;max-width:280px;">
             <div style="font-weight:bold;font-size:13px;margin-bottom:8px;
                         border-bottom:3px solid ${typeInfo.color};padding-bottom:6px;line-height:1.4;">
-                ${p.P29_004}${closedBadge}${branchBadge}
+                ${safeName}${closedBadge}${branchBadge}
             </div>
             <table style="font-size:12px;width:100%;border-collapse:collapse;">
                 <tr>
@@ -474,12 +510,12 @@ function createMarker(feature) {
                 </tr>
                 <tr>
                     <th style="text-align:left;color:#777;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;">住所</th>
-                    <td style="line-height:1.5;">${p.P29_005}</td>
+                    <td style="line-height:1.5;">${safeAddr}</td>
                 </tr>
                 ${campusRow}
                 <tr>
                     <th style="text-align:left;color:#aaa;padding:3px 8px 3px 0;white-space:nowrap;font-size:10px;">施設コード</th>
-                    <td style="color:#aaa;font-size:10px;">${p.P29_002}</td>
+                    <td style="color:#aaa;font-size:10px;">${safeCode}</td>
                 </tr>
             </table>
         </div>
@@ -609,6 +645,13 @@ fetch('P29-23_13.geojson')
         // フィルターUIを構築
         buildFilterUI('type-filters', SCHOOL_TYPES, selectedTypes);
         buildFilterUI('org-filters',  ORG_TYPES,    selectedOrgs);
+
+        // 全選択/全解除ボタンのイベントをJS側で登録
+        // （HTML側に onclick="" を書かずにすむため、CSPポリシーと相性が良い）
+        document.getElementById('btn-type-all') .addEventListener('click', () => selectAll('type-filters', selectedTypes, true));
+        document.getElementById('btn-type-none').addEventListener('click', () => selectAll('type-filters', selectedTypes, false));
+        document.getElementById('btn-org-all')  .addEventListener('click', () => selectAll('org-filters',  selectedOrgs,  true));
+        document.getElementById('btn-org-none') .addEventListener('click', () => selectAll('org-filters',  selectedOrgs,  false));
 
         // 廃校チェックボックスのイベントを設定
         document.getElementById('show-closed').addEventListener('change', e => {
