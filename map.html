@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>東京都学校施設マップ</title>
+
+    <!-- Leaflet（地図ライブラリ）のCSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- MarkerCluster（マーカーをまとめて表示するプラグイン）のCSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+    <style>
+        /* ページ全体のリセット */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Hiragino Sans', 'Meiryo', sans-serif; background: #f0f0f0; }
+
+        /* アプリ全体のレイアウト（横並び） */
+        #app { display: flex; height: 100vh; }
+
+        /* ====== サイドパネル ====== */
+        #sidebar {
+            width: 270px;
+            min-width: 270px;
+            background: #fff;
+            box-shadow: 2px 0 6px rgba(0,0,0,0.15);
+            overflow-y: auto;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #sidebar-header {
+            background: #1565C0;
+            color: white;
+            padding: 14px 15px 10px;
+        }
+
+        #sidebar-header h1 {
+            font-size: 15px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        #sidebar-header p {
+            font-size: 11px;
+            opacity: 0.85;
+        }
+
+        #sidebar-body { padding: 12px 14px; flex: 1; }
+
+        /* 統計表示 */
+        #stats {
+            font-size: 12px;
+            color: #444;
+            padding: 8px 10px;
+            background: #E3F2FD;
+            border-radius: 5px;
+            margin-bottom: 12px;
+            border-left: 3px solid #1565C0;
+        }
+
+        #stats strong { color: #1565C0; }
+
+        /* エラーメッセージ */
+        #error-msg {
+            display: none;
+            padding: 12px;
+            background: #FFF8E1;
+            border: 1px solid #FFB300;
+            border-radius: 5px;
+            font-size: 12px;
+            color: #6D4C41;
+            margin-bottom: 12px;
+            line-height: 1.7;
+        }
+
+        #error-msg code {
+            display: inline-block;
+            background: #EEE;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* フィルターセクション */
+        .filter-section { margin-bottom: 14px; }
+
+        .filter-section h3 {
+            font-size: 12px;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 7px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .filter-section h3:hover { color: #1565C0; }
+
+        /* 全選択・全解除ボタン */
+        .filter-actions {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 6px;
+        }
+
+        .filter-actions button {
+            flex: 1;
+            font-size: 10px;
+            padding: 2px 4px;
+            border: 1px solid #ccc;
+            background: #f5f5f5;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .filter-actions button:hover { background: #e0e0e0; }
+
+        /* 各チェックボックス行 */
+        .filter-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .filter-item input[type="checkbox"] {
+            margin-right: 6px;
+            cursor: pointer;
+            accent-color: #1565C0;
+        }
+
+        .filter-item label {
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            user-select: none;
+        }
+
+        /* 凡例の色丸 */
+        .color-dot {
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid rgba(0,0,0,0.15);
+            flex-shrink: 0;
+        }
+
+        /* ====== 地図エリア ====== */
+        #map { flex: 1; }
+
+        /* ====== ローディング表示 ====== */
+        #loading {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.95);
+            padding: 20px 35px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 5000;
+            font-size: 14px;
+            color: #333;
+            text-align: center;
+        }
+
+        #loading p { margin-top: 8px; font-size: 12px; color: #888; }
+
+        /* プログレスバー */
+        .progress-bar {
+            width: 200px;
+            height: 4px;
+            background: #eee;
+            border-radius: 2px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #1565C0;
+            border-radius: 2px;
+            animation: progress-anim 1.5s ease-in-out infinite;
+        }
+
+        @keyframes progress-anim {
+            0% { width: 0%; }
+            50% { width: 70%; }
+            100% { width: 100%; }
+        }
+
+        /* ====== スマホ用：サイドパネル開閉ボタン ====== */
+        #toggle-btn {
+            display: none; /* PC では非表示 */
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 2000;
+            background: #1565C0;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            width: 44px;
+            height: 44px;
+            font-size: 20px;
+            line-height: 44px;
+            text-align: center;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+        }
+
+        /* スマホ用：サイドパネルが開いているときの背景オーバーレイ */
+        #overlay {
+            display: none;
+            position: fixed;
+            inset: 0; /* top/right/bottom/left を全部0に */
+            background: rgba(0, 0, 0, 0.45);
+            z-index: 1400;
+        }
+
+        #overlay.active { display: block; }
+
+        /* ====== スマホ（縦長）専用のレスポンシブ設定 ====== */
+        @media (max-width: 640px) {
+
+            /* ハンバーガーボタンを表示 */
+            #toggle-btn { display: block; }
+
+            /* サイドパネルを画面外に隠す（左にスライドアウト） */
+            #sidebar {
+                position: fixed;
+                top: 0; left: 0; bottom: 0;
+                width: 280px;
+                min-width: 280px;
+                transform: translateX(-100%);   /* 最初は画面外 */
+                transition: transform 0.28s ease;
+                z-index: 1500;
+            }
+
+            /* .open クラスが付いたときにスライドイン */
+            #sidebar.open {
+                transform: translateX(0);
+            }
+        }
+    </style>
+</head>
+<body>
+
+<!-- スマホ用：サイドパネルを開くハンバーガーボタン -->
+<button id="toggle-btn" title="フィルターを開く">☰</button>
+
+<!-- サイドパネルが開いているときの背景（タップで閉じる） -->
+<div id="overlay"></div>
+
+<div id="app">
+
+    <!-- ====== サイドパネル ====== -->
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <h1>🏫 東京都 学校施設マップ</h1>
+            <p>国土数値情報 P29-23（2023年）</p>
+        </div>
+
+        <div id="sidebar-body">
+
+            <!-- 統計 -->
+            <div id="stats">読み込み中...</div>
+
+            <!-- エラーメッセージ（fetch失敗時） -->
+            <div id="error-msg">
+                <strong>⚠️ データを読み込めませんでした</strong><br><br>
+                ブラウザのセキュリティ制限により、ファイルを直接開くとGeoJSONが読めないことがあります。<br><br>
+                ローカルサーバーを起動して開いてください：<br>
+                <code>python -m http.server 8000</code><br><br>
+                → <code>http://localhost:8000/map.html</code>
+            </div>
+
+            <!-- 学校種別フィルター -->
+            <div class="filter-section">
+                <h3>▼ 学校種別</h3>
+                <div class="filter-actions">
+                    <button onclick="selectAll('type-filters', selectedTypes, true)">全選択</button>
+                    <button onclick="selectAll('type-filters', selectedTypes, false)">全解除</button>
+                </div>
+                <div id="type-filters"></div>
+            </div>
+
+            <!-- 設置者区分フィルター -->
+            <div class="filter-section">
+                <h3>▼ 設置者区分</h3>
+                <div class="filter-actions">
+                    <button onclick="selectAll('org-filters', selectedOrgs, true)">全選択</button>
+                    <button onclick="selectAll('org-filters', selectedOrgs, false)">全解除</button>
+                </div>
+                <div id="org-filters"></div>
+            </div>
+
+            <!-- 廃校フィルター -->
+            <div class="filter-section">
+                <h3>▼ 廃校の表示</h3>
+                <div class="filter-item">
+                    <input type="checkbox" id="show-closed" checked>
+                    <label for="show-closed">廃校・閉園を含める</label>
+                </div>
+            </div>
+
+        </div><!-- /sidebar-body -->
+    </div><!-- /sidebar -->
+
+    <!-- ====== 地図 ====== -->
+    <div id="map"></div>
+
+</div><!-- /app -->
+
+<!-- ローディング表示 -->
+<div id="loading">
+    📍 地図データを読み込んでいます...
+    <p>4,451件の施設を処理中</p>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+</div>
+
+<!-- Leaflet 本体 -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- MarkerCluster プラグイン（近くのマーカーをまとめて表示） -->
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<script>
+// ============================================================
+// 学校種別コードの定義（P29_003）
+// ============================================================
+const SCHOOL_TYPES = {
+    '16001': { label: '小学校',               color: '#2196F3' },
+    '16002': { label: '中学校',               color: '#4CAF50' },
+    '16003': { label: '中等教育学校',          color: '#00897B' },
+    '16004': { label: '高等学校',             color: '#FF9800' },
+    '16005': { label: '高等専門学校',          color: '#795548' },
+    '16006': { label: '短期大学',             color: '#E91E63' },
+    '16007': { label: '大学',                '#F44336' : '#F44336' },  // ←後で上書き
+    '16011': { label: '幼稚園',              color: '#FDD835' },
+    '16012': { label: '特別支援学校',          color: '#9C27B0' },
+    '16013': { label: '幼保連携型認定こども園', color: '#8BC34A' },
+    '16014': { label: '義務教育学校',          color: '#00BCD4' },
+    '16015': { label: '各種学校',             color: '#9E9E9E' },
+    '16016': { label: '専修学校',             color: '#FF5722' },
+};
+
+// ↑ 上のオブジェクトに color を正しく設定し直す
+SCHOOL_TYPES['16007'] = { label: '大学', color: '#F44336' };
+
+// ============================================================
+// 設置者区分コードの定義（P29_006）
+// ============================================================
+const ORG_TYPES = {
+    '0': { label: '不明',              color: '#9E9E9E' },
+    '1': { label: '国立',              color: '#D32F2F' },
+    '2': { label: '公立（都立）',      color: '#1565C0' },
+    '3': { label: '公立（区市町村立）', color: '#2E7D32' },
+    '4': { label: '私立',              color: '#E65100' },
+};
+
+// ============================================================
+// フィルターの状態（選択されているコードのSet）
+// ============================================================
+let selectedTypes = new Set(Object.keys(SCHOOL_TYPES)); // 最初は全種別ON
+let selectedOrgs  = new Set(Object.keys(ORG_TYPES));    // 最初は全設置者ON
+let showClosed = true;  // 廃校を表示するか
+
+// ============================================================
+// 地図の初期化（東京都庁あたりを中心に）
+// ============================================================
+// zoomControl: false でデフォルトの左上ズームボタンを無効にする
+const map = L.map('map', { zoomControl: false }).setView([35.689, 139.692], 11);
+
+// ズームボタンを右上に配置し直す
+// （スマホ用ハンバーガーボタン ☰ が左上にあるため重ならないようにする）
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+// 背景地図タイル（OpenStreetMap）
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+}).addTo(map);
+
+// ============================================================
+// マーカークラスタリングの設定
+// （ズームアウト時に近くのマーカーを1つにまとめて表示）
+// ============================================================
+const clusterGroup = L.markerClusterGroup({
+    chunkedLoading: true,   // 大量データを少しずつ処理してブラウザが固まらないようにする
+    maxClusterRadius: 50,   // この距離（px）以内のマーカーをまとめる
+    spiderfyOnMaxZoom: true,// 最大ズームで重なったマーカーをくもの巣状に広げる
+});
+map.addLayer(clusterGroup);
+
+// 全マーカーを格納する配列（フィルタリングに使う）
+let allMarkers = [];
+
+// ============================================================
+// カスタムマーカーアイコンを作る関数
+// color  : 色（#RRGGBB形式）
+// isOld  : 廃校ならtrue（半透明にする）
+// ============================================================
+function makeIcon(color, isOld) {
+    // 廃校は薄く表示（opacity = 0.4）
+    const opacity = isOld ? 0.4 : 1.0;
+
+    // SVGで丸いマーカーを作る（約2倍サイズ: 14px → 26px）
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26" opacity="${opacity}">
+        <circle cx="13" cy="13" r="11" fill="${color}" stroke="white" stroke-width="2"/>
+    </svg>`;
+
+    return L.divIcon({
+        html: svg,
+        className: '',        // Leafletのデフォルトスタイルを消す
+        iconSize: [26, 26],
+        iconAnchor: [13, 13], // マーカーの中心を座標に合わせる
+        popupAnchor: [0, -14],
+    });
+}
+
+// ============================================================
+// 1件分のマーカーを作る関数
+// ============================================================
+function createMarker(feature) {
+    const p      = feature.properties;
+    const coords = feature.geometry.coordinates; // [経度, 緯度]
+
+    // 種別・設置者の情報を取得（知らないコードはグレーで表示）
+    const typeInfo = SCHOOL_TYPES[p.P29_003] || { label: `コード:${p.P29_003}`, color: '#999' };
+    const orgInfo  = ORG_TYPES[p.P29_006]   || { label: `コード:${p.P29_006}`, color: '#999' };
+    const isClosed = p.P29_007 === '1';
+
+    // マーカーを作成（Leafletは [緯度, 経度] の順に注意！）
+    const marker = L.marker([coords[1], coords[0]], {
+        icon: makeIcon(typeInfo.color, isClosed),
+    });
+
+    // ---- ポップアップの中身を組み立てる ----
+    // 廃校バッジ
+    const closedBadge = isClosed
+        ? `<span style="background:#e53935;color:white;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:6px;vertical-align:middle;">廃校</span>`
+        : '';
+
+    // 分校バッジ
+    const branchBadge = (p.P29_008 && p.P29_008 !== '00')
+        ? `<span style="background:#1565C0;color:white;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:4px;vertical-align:middle;">分校</span>`
+        : '';
+
+    // キャンパス名（大学で複数キャンパスがある場合のみ）
+    const campusRow = p.P29_009
+        ? `<tr><th>キャンパス</th><td>${p.P29_009}</td></tr>`
+        : '';
+
+    marker.bindPopup(`
+        <div style="font-family:'Hiragino Sans','Meiryo',sans-serif;min-width:210px;max-width:280px;">
+            <div style="font-weight:bold;font-size:13px;margin-bottom:8px;
+                        border-bottom:3px solid ${typeInfo.color};padding-bottom:6px;line-height:1.4;">
+                ${p.P29_004}${closedBadge}${branchBadge}
+            </div>
+            <table style="font-size:12px;width:100%;border-collapse:collapse;">
+                <tr>
+                    <th style="text-align:left;color:#777;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;">種別</th>
+                    <td><span style="background:${typeInfo.color};color:white;
+                                     padding:1px 7px;border-radius:3px;font-size:11px;">${typeInfo.label}</span></td>
+                </tr>
+                <tr>
+                    <th style="text-align:left;color:#777;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;">設置者</th>
+                    <td>${orgInfo.label}</td>
+                </tr>
+                <tr>
+                    <th style="text-align:left;color:#777;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;">住所</th>
+                    <td style="line-height:1.5;">${p.P29_005}</td>
+                </tr>
+                ${campusRow}
+                <tr>
+                    <th style="text-align:left;color:#aaa;padding:3px 8px 3px 0;white-space:nowrap;font-size:10px;">施設コード</th>
+                    <td style="color:#aaa;font-size:10px;">${p.P29_002}</td>
+                </tr>
+            </table>
+        </div>
+    `, { maxWidth: 300 });
+
+    // フィルタリング用にマーカーへメタデータを付ける
+    marker._typeCode = p.P29_003;
+    marker._orgCode  = p.P29_006;
+    marker._isClosed = isClosed;
+
+    return marker;
+}
+
+// ============================================================
+// フィルターを適用してマーカーを更新する関数
+// （チェックボックスが変わるたびに呼ばれる）
+// ============================================================
+function applyFilters() {
+    // 一旦全マーカーを地図から削除
+    clusterGroup.clearLayers();
+
+    // 条件を満たすマーカーだけを抽出
+    const visible = allMarkers.filter(m => {
+        if (!selectedTypes.has(m._typeCode)) return false; // 種別フィルター
+        if (!selectedOrgs.has(m._orgCode))   return false; // 設置者フィルター
+        if (!showClosed && m._isClosed)      return false; // 廃校フィルター
+        return true;
+    });
+
+    // まとめて地図に追加（addLayersは内部で効率的に処理する）
+    clusterGroup.addLayers(visible);
+
+    // 統計表示を更新
+    document.getElementById('stats').innerHTML =
+        `表示中: <strong>${visible.length.toLocaleString()}</strong> 件 ／ 全体: <strong>${allMarkers.length.toLocaleString()}</strong> 件`;
+}
+
+// ============================================================
+// フィルターUIのチェックボックスを全選択/全解除する
+// ============================================================
+function selectAll(containerId, selectedSet, checked) {
+    const container = document.getElementById(containerId);
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = checked;
+        const code = cb.dataset.code;
+        if (checked) selectedSet.add(code);
+        else         selectedSet.delete(code);
+    });
+    applyFilters();
+}
+
+// ============================================================
+// フィルターのチェックボックスUIを生成する関数
+// containerId : チェックボックスを追加するdivのID
+// items       : コード→{label,color} のオブジェクト
+// selectedSet : 選択中コードのSet（変更時に更新）
+// ============================================================
+function buildFilterUI(containerId, items, selectedSet) {
+    const container = document.getElementById(containerId);
+
+    Object.entries(items).forEach(([code, info]) => {
+        const div = document.createElement('div');
+        div.className = 'filter-item';
+
+        // チェックボックス
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = `cb-${containerId}-${code}`;
+        cb.dataset.code = code;
+        cb.checked = true;
+        cb.addEventListener('change', () => {
+            if (cb.checked) selectedSet.add(code);
+            else            selectedSet.delete(code);
+            applyFilters();
+        });
+
+        // ラベル（色丸 + 名前）
+        const label = document.createElement('label');
+        label.htmlFor = cb.id;
+        label.innerHTML =
+            `<span class="color-dot" style="background:${info.color};"></span>${info.label}`;
+
+        div.appendChild(cb);
+        div.appendChild(label);
+        container.appendChild(div);
+    });
+}
+
+// ============================================================
+// スマホ用：サイドパネルの開閉処理
+// ============================================================
+const sidebar  = document.getElementById('sidebar');
+const overlay  = document.getElementById('overlay');
+const toggleBtn = document.getElementById('toggle-btn');
+
+// ハンバーガーボタンをタップ → サイドパネルを開く/閉じる
+toggleBtn.addEventListener('click', () => {
+    const isOpen = sidebar.classList.toggle('open');
+    overlay.classList.toggle('active', isOpen);
+    // ボタンのアイコンを切り替え（開: ✕ / 閉: ☰）
+    toggleBtn.textContent = isOpen ? '✕' : '☰';
+});
+
+// オーバーレイをタップ → サイドパネルを閉じる
+overlay.addEventListener('click', () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('active');
+    toggleBtn.textContent = '☰';
+});
+
+// ============================================================
+// GeoJSONファイルを読み込んで地図に表示
+// ============================================================
+fetch('P29-23_13.geojson')
+    .then(response => {
+        // レスポンスが正常でなければエラーを投げる
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        return response.json();
+    })
+    .then(geojson => {
+        // 全フィーチャーをマーカーに変換して配列に保存
+        geojson.features.forEach(feature => {
+            const marker = createMarker(feature);
+            allMarkers.push(marker);
+        });
+
+        // フィルターUIを構築
+        buildFilterUI('type-filters', SCHOOL_TYPES, selectedTypes);
+        buildFilterUI('org-filters',  ORG_TYPES,    selectedOrgs);
+
+        // 廃校チェックボックスのイベントを設定
+        document.getElementById('show-closed').addEventListener('change', e => {
+            showClosed = e.target.checked;
+            applyFilters();
+        });
+
+        // フィルターを適用してマーカーを地図に追加
+        applyFilters();
+
+        // ローディング表示を消す
+        document.getElementById('loading').style.display = 'none';
+    })
+    .catch(err => {
+        // 読み込み失敗時はエラーメッセージを表示
+        console.error('GeoJSON読み込みエラー:', err);
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('stats').textContent = '⚠️ データを読み込めませんでした';
+    });
+
+</script>
+</body>
+</html>
